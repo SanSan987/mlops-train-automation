@@ -56,33 +56,46 @@ resource "aws_iam_role" "sfn_exec_role" {
   })
 }
 
-# Політика дозволів для Step Function (виклик Lambda)
+# --- 2. CloudWatch Log Group для Step Function ---
+# Рекомендований префікс /aws/vendedlogs/states/ для Step Functions
+resource "aws_cloudwatch_log_group" "sfn_log_group" {
+  name              = "/aws/vendedlogs/states/${var.project_name}-training-pipeline"
+  retention_in_days = 7
+}
+
+# Політика дозволів для Step Function:
+# - invoke Lambda
+# - CloudWatch Logs delivery permissions (щоб роль могла писати в log_destination)
 resource "aws_iam_policy" "sfn_lambda_invoke_policy" {
   name        = "${var.project_name}-sfn-lambda-invoke-policy"
-  description = "Allow Step Function to invoke all Lambdas"
+  description = "Allow Step Function to invoke Lambdas and deliver logs to CloudWatch"
 
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
+      # Виклик Lambda (для спрощення - все)
       {
         Effect   = "Allow",
         Action   = "lambda:InvokeFunction",
-        Resource = "*" # Дозволяємо викликати всі Lambda (для спрощення)
+        Resource = "*"
       },
+
+      # ✅ Права, потрібні Step Functions для CloudWatch Logs log delivery
+      # Важливо: ці CloudWatch Logs API не підтримують resource-level permissions,
+      # тому Resource має бути "*"
       {
-        Effect   = "Allow",
-        Action   = "logs:CreateLogGroup",
-        Resource = "arn:aws:logs:*:*:*"
-      },
-      {
-        Effect   = "Allow",
-        Action   = "logs:CreateLogStream",
-        Resource = "arn:aws:logs:*:*:*"
-      },
-      {
-        Effect   = "Allow",
-        Action   = "logs:PutLogEvents",
-        Resource = "arn:aws:logs:*:*:*"
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogDelivery",
+          "logs:GetLogDelivery",
+          "logs:UpdateLogDelivery",
+          "logs:DeleteLogDelivery",
+          "logs:ListLogDeliveries",
+          "logs:PutResourcePolicy",
+          "logs:DescribeResourcePolicies",
+          "logs:DescribeLogGroups"
+        ],
+        Resource = "*"
       }
     ]
   })
@@ -93,20 +106,18 @@ resource "aws_iam_role_policy_attachment" "sfn_policy_attach" {
   policy_arn = aws_iam_policy.sfn_lambda_invoke_policy.arn
 }
 
-# --- 2. AWS Lambda Функції ---
+# --- 3. AWS Lambda Функції ---
 
-# 2.1. Lambda Validate Data
 resource "aws_lambda_function" "validate" {
   function_name    = "${var.project_name}-validate"
   role             = aws_iam_role.lambda_exec_role.arn
   handler          = "validate.lambda_handler"
   runtime          = "python3.11"
   filename         = "lambda/validate.zip"
-  source_code_hash = filebase64sha256("lambda/validate.zip") # Хеш для відстеження змін
+  source_code_hash = filebase64sha256("lambda/validate.zip")
   timeout          = 30
 }
 
-# 2.2. Lambda Log Metrics
 resource "aws_lambda_function" "log_metrics" {
   function_name    = "${var.project_name}-log-metrics"
   role             = aws_iam_role.lambda_exec_role.arn
@@ -117,47 +128,37 @@ resource "aws_lambda_function" "log_metrics" {
   timeout          = 30
 }
 
-# --- 3. AWS Step Function (State Machine) ---
+# --- 4. AWS Step Function (State Machine) ---
 
-# Визначення State Machine (ASL - Amazon States Language)
 locals {
   sfn_definition = jsonencode({
     Comment = "MLOps Training Automation Pipeline",
     StartAt = "ValidateData",
     States = {
       ValidateData = {
-        Type = "Task",
+        Type     = "Task",
         Resource = aws_lambda_function.validate.arn,
-        Next = "LogMetrics"
+        Next     = "LogMetrics"
       },
       LogMetrics = {
-        Type = "Task",
+        Type     = "Task",
         Resource = aws_lambda_function.log_metrics.arn,
-        End = true
+        End      = true
       }
     }
   })
 }
 
 resource "aws_sfn_state_machine" "training_pipeline" {
-  name     = "${var.project_name}-training-pipeline"
-  role_arn = aws_iam_role.sfn_exec_role.arn
+  name       = "${var.project_name}-training-pipeline"
+  role_arn   = aws_iam_role.sfn_exec_role.arn
   definition = local.sfn_definition
 
-  # Опціонально: Налаштування логування для відстеження виконання
   logging_configuration {
-    level     = "ALL"
+    level                  = "ALL"
     include_execution_data = true
-    destinations {
-      cloudwatch_logs_log_group {
-        log_group_arn = aws_cloudwatch_log_group.sfn_log_group.arn
-      }
-    }
-  }
-}
 
-# CloudWatch Log Group для Step Function
-resource "aws_cloudwatch_log_group" "sfn_log_group" {
-  name              = "/aws/stepfunctions/${aws_sfn_state_machine.training_pipeline.name}"
-  retention_in_days = 7
+    # ✅ правильний формат: "<log-group-arn>:*"
+    log_destination = "${aws_cloudwatch_log_group.sfn_log_group.arn}:*"
+  }
 }
