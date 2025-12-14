@@ -3,7 +3,9 @@ stages:
 
 train-model:
   stage: train
-  image: amazon/aws-cli:2.15.0
+  image:
+    name: amazon/aws-cli:2.15.0
+    entrypoint: [""]
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
   script:
