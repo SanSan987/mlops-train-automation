@@ -11,14 +11,13 @@ train-model:
     - aws --version
 
     # Перевіряємо, що змінні реально передані в job
-    - : "${AWS_DEFAULT_REGION:?AWS_DEFAULT_REGION is not set}"
-    - : "${STATE_MACHINE_ARN:?STATE_MACHINE_ARN is not set}"
+    - test -n "$AWS_DEFAULT_REGION" || (echo "AWS_DEFAULT_REGION is not set" >&2; exit 1)
+    - test -n "$STATE_MACHINE_ARN" || (echo "STATE_MACHINE_ARN is not set" >&2; exit 1)
 
-    # Перевірка AWS доступу 
+    # Перевірка AWS доступу
     - aws sts get-caller-identity
 
     - EXECUTION_NAME="train-${CI_COMMIT_SHORT_SHA}-$(date +%s)"
     - INPUT_JSON=$(printf '{"source":"gitlab-ci","commit":"%s","gitlab_job_id":"%s"}' "$CI_COMMIT_SHORT_SHA" "$CI_JOB_ID")
 
-    # stepfunctions (з s на кінці), без переносів рядка
     - aws stepfunctions start-execution --region "$AWS_DEFAULT_REGION" --state-machine-arn "$STATE_MACHINE_ARN" --name "$EXECUTION_NAME" --input "$INPUT_JSON"
