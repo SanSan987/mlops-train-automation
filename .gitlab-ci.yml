@@ -7,8 +7,18 @@ train-model:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
   script:
+    - set -e
     - aws --version
-    - echo "Запуск AWS Step Function для тренування моделі..."
+
+    # Перевіряємо, що змінні реально передані в job
+    - : "${AWS_DEFAULT_REGION:?AWS_DEFAULT_REGION is not set}"
+    - : "${STATE_MACHINE_ARN:?STATE_MACHINE_ARN is not set}"
+
+    # Перевірка AWS доступу 
+    - aws sts get-caller-identity
+
     - EXECUTION_NAME="train-${CI_COMMIT_SHORT_SHA}-$(date +%s)"
     - INPUT_JSON=$(printf '{"source":"gitlab-ci","commit":"%s","gitlab_job_id":"%s"}' "$CI_COMMIT_SHORT_SHA" "$CI_JOB_ID")
-    - aws stepfunctions start-execution --state-machine-arn "$STATE_MACHINE_ARN" --name "$EXECUTION_NAME" --input "$INPUT_JSON"
+
+    # stepfunctions (з s на кінці), без переносів рядка
+    - aws stepfunctions start-execution --region "$AWS_DEFAULT_REGION" --state-machine-arn "$STATE_MACHINE_ARN" --name "$EXECUTION_NAME" --input "$INPUT_JSON"
