@@ -1,6 +1,9 @@
 stages:
   - train
 
+variables:
+  AWS_DEFAULT_REGION: "eu-central-1"
+
 train-model:
   stage: train
   image:
